@@ -2,6 +2,8 @@
 
 A small web app that prints wrap-around labels for 35mm film canisters.
 
+![The filmwrap interface: film library on the left, live print preview on the right](docs/screenshot.png)
+
 I shoot a fair amount of expired film, and a 35mm cassette doesn't tell you when
 it was bought or when it expires. I'd been handwriting those dates on the
 canisters, so I made this to print tidy labels instead. Each label is a thin
