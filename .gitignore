@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Exported libraries / generated artifacts
+filmwrap-library*.json
+*.pdf
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

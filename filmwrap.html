@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>filmwrap - 35mm canister label maker</title>
+<meta name="author" content="Kameron Markham">
+<!-- filmwrap, by Kameron Markham -->
+<meta name="copyright" content="© Kameron Markham">
+<style>
+  /* ---------- Theme ---------- */
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1d212b; --line:#2a3040;
+    --text:#e8ecf3; --muted:#9aa4b6; --accent:#5b9dff; --accent2:#2f6fd6;
+    --danger:#ff6b6b; --ok:#48c78e; --field:#11141a;
+    /* label design vars (mirrored into print) */
+    --cut:#bdbdbd;
+    --font:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    --fscale:1;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font:14px/1.45 var(--font);}
+  button,input,select{font-family:inherit}
+
+  /* ---------- App layout ---------- */
+  .app{display:flex;height:100vh;overflow:hidden}
+  .panel{width:430px;min-width:430px;height:100%;overflow-y:auto;
+    background:var(--panel);border-right:1px solid var(--line);padding:0 0 40px}
+  .preview{flex:1;height:100%;overflow:auto;background:#33373f;padding:24px;display:flex;flex-direction:column;align-items:center}
+
+  .toolbar{position:sticky;top:0;z-index:5;background:var(--panel);
+    border-bottom:1px solid var(--line);padding:14px 16px;display:flex;align-items:center;gap:10px}
+  .toolbar h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.2px}
+  .toolbar .tag{font-size:11px;color:var(--muted);margin-left:auto}
+
+  .sec{border-bottom:1px solid var(--line);padding:14px 16px}
+  .sec h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin:0 0 10px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+  .field{display:flex;flex-direction:column;gap:4px}
+  .field label{font-size:11px;color:var(--muted)}
+  .field.grow{flex:1;min-width:0}
+  input,select{background:var(--field);border:1px solid var(--line);color:var(--text);
+    border-radius:7px;padding:7px 8px;font-size:13px;width:100%}
+  input[type=color]{padding:2px;height:34px;cursor:pointer}
+  input[type=range]{padding:0}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+
+  .btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:8px 12px;font-size:13px;cursor:pointer;white-space:nowrap}
+  .btn:hover{border-color:#3a455c}
+  .btn.primary{background:var(--accent2);border-color:var(--accent2);font-weight:600}
+  .btn.primary:hover{background:var(--accent)}
+  .btn.tiny{padding:4px 8px;font-size:12px;border-radius:6px}
+  .btn.danger:hover{border-color:var(--danger);color:var(--danger)}
+
+  /* ---------- Film cards ---------- */
+  .film{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+  .film .top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .film .swatch{width:14px;height:14px;border-radius:4px;border:1px solid #0006;flex:none}
+  .film .name-in{font-weight:600}
+  .film .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .film .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .film .acts{display:flex;gap:6px;margin-left:auto}
+
+  .hint{font-size:11px;color:var(--muted);margin-top:6px}
+  .switchrow{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px}
+  .switchrow input{width:auto}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:2px 16px}
+  .summary{font-size:12px;color:var(--muted)}
+  .summary b{color:var(--text)}
+  .seg{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{flex:1;background:var(--field);border:none;color:var(--muted);padding:7px;cursor:pointer;font-size:12px}
+  .seg button.on{background:var(--accent2);color:#fff}
+
+  /* ---------- Preview sheets ---------- */
+  .sheets-wrap{zoom:var(--zoom,.7);display:flex;flex-direction:column;gap:24px;align-items:center}
+  .sheet{background:#fff;color:#000;box-shadow:0 6px 26px #0007;position:relative;overflow:hidden}
+  .grid{display:grid;width:100%;height:100%}
+  .grid.collapsed{border-top:1px solid var(--cut);border-left:1px solid var(--cut)}
+  .grid.collapsed .strip{border-right:1px solid var(--cut);border-bottom:1px solid var(--cut)}
+  .grid.gapped .strip{border:1px dashed var(--cut)}
+  .grid.nocut.collapsed,.grid.nocut.collapsed .strip{border-color:transparent}
+  .grid.nocut.gapped .strip{border-color:transparent}
+
+  /* ---------- A single wrap strip ---------- */
+  .strip{display:flex;align-items:stretch;overflow:hidden;background:#fff;color:#111}
+  .strip .accent{flex:none;width:.13in;background:#888}
+  .strip .pad{display:flex;align-items:center;gap:.16in;flex:1;min-width:0;padding:.05in .14in}
+  /* shrinkable so long names ellipsize instead of clipping */
+  .ident{display:flex;flex-direction:column;justify-content:center;flex:0 1 auto;min-width:0;max-width:2.5in}
+  .ident .fname{font-weight:800;line-height:1.05;font-size:calc(12.5pt*var(--fscale));letter-spacing:.1px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ident .sub{font-size:calc(8pt*var(--fscale));color:#333;margin-top:0;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .iso{display:inline-block;border:1px solid #222;border-radius:4px;padding:0 .05in;font-weight:700;
+    font-size:calc(8.5pt*var(--fscale));margin-right:.06in}
+  .dates{display:flex;flex-direction:column;justify-content:center;flex:0 1 auto;min-width:0;font-size:calc(8.5pt*var(--fscale));
+    color:#111;border-left:1px solid #ccc;padding-left:.14in;white-space:nowrap}
+  .dates>div{overflow:hidden;text-overflow:ellipsis}
+  .dates .k{color:#555;font-size:calc(7pt*var(--fscale));text-transform:uppercase;letter-spacing:.5px}
+  .write{flex:1 1 auto;min-width:.6in;display:flex;flex-direction:column;justify-content:center;gap:.07in;padding-left:.06in}
+  .wline{display:flex;align-items:baseline;gap:.06in;font-size:calc(8pt*var(--fscale));color:#444}
+  .wline .lab{flex:none;text-transform:uppercase;letter-spacing:.5px;font-size:calc(7pt*var(--fscale));color:#666}
+  .wline .ln{flex:1;border-bottom:1px solid #222;height:.01in}
+  .ident.repeat{display:flex;flex-direction:column;justify-content:center;flex:0 1 auto;min-width:0;border-left:1px solid #ccc;padding-left:.14in;max-width:1.8in}
+
+  .pagelabel{color:#cdd3df;font-size:12px;margin:-12px 0 -6px}
+  .empty-note{color:#cdd3df;text-align:center;margin-top:40px}
+
+  /* ---------- Print ---------- */
+  @media print{
+    .panel,.toolbar,.no-print,.pagelabel{display:none !important}
+    .app{display:block;height:auto}
+    .preview{padding:0;background:#fff;overflow:visible;display:block}
+    .sheets-wrap{zoom:1 !important;gap:0;display:block}
+    .sheet{box-shadow:none;margin:0;page-break-after:always}
+    .sheet:last-child{page-break-after:auto}
+    body{background:#fff}
+    /* print background colors (accent bars) */
+    *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ===================== CONTROL PANEL ===================== -->
+  <aside class="panel">
+    <div class="toolbar">
+      <h1>🎞️ filmwrap</h1>
+      <span class="tag">canister label maker</span>
+    </div>
+
+    <div class="sec">
+      <div class="row" style="gap:6px">
+        <button class="btn primary" id="printBtn" style="flex:1">🖨️ Print sheet</button>
+        <button class="btn" id="exportBtn" title="Save your library to a file">Export</button>
+        <button class="btn" id="importBtn" title="Load a saved library">Import</button>
+        <input type="file" id="importFile" accept="application/json" hidden>
+      </div>
+      <div class="summary" id="summary" style="margin-top:10px"></div>
+    </div>
+
+    <!-- Film library -->
+    <div class="sec">
+      <h2>Film library</h2>
+      <div id="films"></div>
+      <button class="btn" id="addFilm" style="width:100%">＋ Add film</button>
+      <div class="row" style="gap:6px;margin-top:6px">
+        <button class="btn tiny" id="loadSamples" style="flex:1" title="Add 4 example films you can edit">Load sample films</button>
+        <button class="btn tiny" id="clearFilms" style="flex:1" title="Remove every film from the library">Clear all</button>
+      </div>
+      <div class="hint">Quantity = how many rolls of that film you have. Each roll gets its own wrap-strip.</div>
+    </div>
+
+    <!-- Label design -->
+    <div class="sec">
+      <h2>Strip size &amp; paper</h2>
+      <div class="row">
+        <div class="field grow">
+          <label>Strip length (in)</label>
+          <input type="number" step="0.1" min="2" data-set="stripLen" id="stripLen">
+        </div>
+        <div class="field grow">
+          <label>Strip height (in)</label>
+          <input type="number" step="0.05" min="0.5" data-set="stripH" id="stripH">
+        </div>
+      </div>
+      <label class="switchrow" style="margin-top:6px"><input type="checkbox" data-set="fullWidth"> Stretch strips to full page width (auto length)</label>
+      <div class="hint" id="wrapHint"></div>
+      <div class="row" style="margin-top:8px">
+        <div class="field">
+          <label>Canister Ø (mm)</label>
+          <input type="number" step="0.5" data-set="diaMm" id="diaMm" style="width:90px">
+        </div>
+        <div class="field">
+          <label>Wraps</label>
+          <input type="number" step="0.25" data-set="wraps" id="wraps" style="width:80px">
+        </div>
+        <button class="btn tiny" id="applyWraps" style="margin-bottom:1px">↳ set length</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="field">
+          <label>Paper</label>
+          <select data-set="paper" id="paper">
+            <option value="letter">US Letter</option>
+            <option value="a4">A4</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Margin (in)</label>
+          <input type="number" step="0.05" min="0" data-set="margin" id="margin" style="width:90px">
+        </div>
+        <div class="field">
+          <label>Gap (in)</label>
+          <input type="number" step="0.02" min="0" data-set="gap" id="gap" style="width:80px">
+        </div>
+      </div>
+    </div>
+
+    <!-- What prints -->
+    <div class="sec">
+      <h2>What prints on each strip</h2>
+      <div class="twocol">
+        <label class="switchrow"><input type="checkbox" data-set="showPurchase"> Purchase date</label>
+        <label class="switchrow"><input type="checkbox" data-set="showExpiry"> Expiry date</label>
+        <label class="switchrow"><input type="checkbox" data-set="showProcess"> Process tag</label>
+        <label class="switchrow"><input type="checkbox" data-set="showFormat"> Format</label>
+        <label class="switchrow"><input type="checkbox" data-set="showFrames"> Frame count</label>
+        <label class="switchrow"><input type="checkbox" data-set="blankEvent"> "Event" line</label>
+        <label class="switchrow"><input type="checkbox" data-set="blankDateShot"> "Date shot" line</label>
+        <label class="switchrow"><input type="checkbox" data-set="repeatIdentity"> Repeat name at end</label>
+        <label class="switchrow"><input type="checkbox" data-set="accent"> Color accent bar</label>
+        <label class="switchrow"><input type="checkbox" data-set="showCut"> Cut lines</label>
+      </div>
+    </div>
+
+    <!-- Look -->
+    <div class="sec">
+      <h2>Appearance</h2>
+      <div class="field" style="margin-bottom:10px">
+        <label>Font</label>
+        <select data-set="font" id="font">
+          <option value="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Sans (system)</option>
+          <option value="Georgia,'Times New Roman',serif">Serif</option>
+          <option value="'Consolas','SF Mono',ui-monospace,monospace">Monospace</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Text size <span id="fscaleval"></span></label>
+        <input type="range" min="0.7" max="1.4" step="0.05" data-set="fscale" id="fscale">
+      </div>
+    </div>
+
+    <div class="sec" style="border-bottom:none">
+      <h2>How to use</h2>
+      <div class="hint" style="line-height:1.55">
+        1. Add your films, ISO, dates &amp; quantities above.<br>
+        2. Tune strip length so it wraps your canister about 2-3 times.<br>
+        3. Hit <b>Print sheet</b>. In the dialog set <b>Margins: None</b> and turn on <b>"Print backgrounds"</b> so the color bars print. Scale can be <b>100%</b> or <b>Fit to page width</b>; both print at the right size.<br>
+        4. Cut along the lines, write the event/date later, wrap around the film &amp; tuck into the tube.
+      </div>
+    </div>
+
+    <div class="sec" style="border-bottom:none;padding-top:0">
+      <div class="hint" style="text-align:center">© <span id="copyYear"></span> Kameron Markham</div>
+    </div>
+  </aside>
+
+  <!-- ===================== PREVIEW ===================== -->
+  <main class="preview">
+    <div class="row no-print" style="gap:12px;align-items:center;margin-bottom:14px;color:#cdd3df">
+      <span style="font-size:12px">Zoom</span>
+      <input type="range" min="0.35" max="1.2" step="0.05" id="zoom" data-set="zoom" style="width:160px">
+      <span id="zoomval" style="font-size:12px;width:40px"></span>
+      <span id="pagecount" style="font-size:12px;margin-left:12px"></span>
+    </div>
+    <div class="sheets-wrap" id="sheets"></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+const $  = (s,r=document)=>r.querySelector(s);
+const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const PAPER={letter:{w:8.5,h:11},a4:{w:8.27,h:11.69}};
+const KEY='filmwrap.v1';
+const LEGACY_KEYS=['filmtube.v2'];   // migrate older saves so libraries survive the rename
+
+/* ---------- Default state ---------- */
+function sampleFilms(){
+  return [
+    {name:'Kodak Portra 400', iso:'400', format:'35mm', frames:'36', process:'C-41', purchase:'2025-03-12', expiry:'2027-09', qty:5, color:'#caa24a'},
+    {name:'Kodak Gold 200',   iso:'200', format:'35mm', frames:'36', process:'C-41', purchase:'2025-01-20', expiry:'2026-11', qty:8, color:'#e0b000'},
+    {name:'Ilford HP5 Plus',  iso:'400', format:'35mm', frames:'36', process:'B&W',  purchase:'2024-10-05', expiry:'2026-05', qty:4, color:'#4a4a4a'},
+    {name:'Fujifilm Superia',  iso:'400', format:'35mm', frames:'24', process:'C-41', purchase:'2024-06-01', expiry:'2025-12', qty:6, color:'#3a8f5a'},
+  ];
+}
+const DEFAULTS={
+  stripLen:7.5, stripH:1.0, diaMm:25, wraps:2.4,
+  paper:'letter', margin:0, gap:0, fullWidth:true,
+  showPurchase:true, showExpiry:true, showProcess:true, showFormat:true, showFrames:false,
+  blankEvent:true, blankDateShot:true, repeatIdentity:false, accent:true, showCut:true,
+  font:'-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif', fscale:1, zoom:0.7,
+};
+
+/* ---------- Sanitizers: keep bad/edited/old saved data from poisoning render ---------- */
+const NUM_KEYS=['stripLen','stripH','diaMm','wraps','margin','gap','fscale','zoom'];
+const BOOL_KEYS=['showPurchase','showExpiry','showProcess','showFormat','showFrames','blankEvent','blankDateShot','repeatIdentity','accent','showCut','fullWidth'];
+function sanitizeSettings(raw){
+  const s={...DEFAULTS, ...(raw&&typeof raw==='object'?raw:{})};
+  for(const k of NUM_KEYS){ const n=Number(s[k]); s[k]=Number.isFinite(n)?n:DEFAULTS[k]; }
+  s.stripLen=Math.max(0.5,s.stripLen);
+  s.stripH  =Math.max(0.25,s.stripH);
+  s.diaMm   =Math.max(1,s.diaMm);
+  s.wraps   =Math.max(0.1,s.wraps);
+  s.margin  =Math.max(0,s.margin);
+  s.gap     =Math.min(5,Math.max(0,s.gap));
+  s.fscale  =Math.min(1.4,Math.max(0.7,s.fscale));
+  s.zoom    =Math.min(1.2,Math.max(0.35,s.zoom));
+  if(s.paper!=='letter'&&s.paper!=='a4') s.paper='letter';
+  BOOL_KEYS.forEach(k=>{ s[k]=!!s[k]; });
+  if(typeof s.font!=='string'||!s.font) s.font=DEFAULTS.font;
+  return s;
+}
+function sanitizeFilms(arr){
+  if(!Array.isArray(arr)) return sampleFilms();
+  return arr.map(f=>{
+    const o=(f&&typeof f==='object')?f:{};
+    const q=Math.floor(Number(o.qty));
+    return {
+      name:String(o.name??''), iso:String(o.iso??''), format:String(o.format??''),
+      frames:String(o.frames??''), process:String(o.process??''),
+      purchase:String(o.purchase??''), expiry:String(o.expiry??''),
+      qty:Number.isFinite(q)?Math.max(0,q):0,
+      color:toHex(o.color),
+    };
+  });
+}
+
+let state = load() || {films:[], settings:{...DEFAULTS}};   // start empty; use "Load sample films" for examples
+// backfill + sanitize older/edited saved data
+state.settings = sanitizeSettings(state.settings);
+state.films    = sanitizeFilms(state.films);
+
+/* ---------- Persistence ---------- */
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
+function load(){ try{
+  let s=localStorage.getItem(KEY);
+  if(!s){ for(const k of LEGACY_KEYS){ const o=localStorage.getItem(k); if(o){ s=o; break; } } }
+  return s?JSON.parse(s):null;
+}catch(e){ return null; } }
+
+/* ---------- Date formatting ---------- */
+function monthName(n){ return (Number.isInteger(n)&&n>=1&&n<=12)?MONTHS[n-1]:null; }
+function fmtDate(v){            // full date or year-month -> "Mar 12, 2025" / "Mar 2025"
+  if(!v) return '';
+  const p=String(v).split('-').map(Number);
+  const mo=monthName(p[1]);
+  if(p.length>=3 && p[2] && mo && Number.isFinite(p[0])) return `${mo} ${p[2]}, ${p[0]}`;
+  if(p.length>=2 && mo && Number.isFinite(p[0])) return `${mo} ${p[0]}`;
+  return v;
+}
+function fmtMonth(v){           // year-month -> "Sep 2027"
+  if(!v) return '';
+  const p=String(v).split('-').map(Number);
+  const mo=monthName(p[1]);
+  if(p.length>=2 && mo && Number.isFinite(p[0])) return `${mo} ${p[0]}`;
+  return v;
+}
+
+/* ============================================================
+   RENDER: film cards (only rebuilt when films are added/removed/loaded)
+   ============================================================ */
+function renderFilms(){
+  const box=$('#films'); box.innerHTML='';
+  state.films.forEach((f,i)=>{
+    const el=document.createElement('div');
+    el.className='film';
+    el.innerHTML=`
+      <div class="top">
+        <span class="swatch" style="background:${toHex(f.color)}"></span>
+        <input class="name-in" data-f="${i}" data-k="name" value="${esc(f.name)}" placeholder="Film name" style="flex:1">
+        <div class="acts">
+          <button class="btn tiny" data-dup="${i}" title="Duplicate">⧉</button>
+          <button class="btn tiny danger" data-del="${i}" title="Delete">✕</button>
+        </div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label>ISO</label><input data-f="${i}" data-k="iso" value="${esc(f.iso)}"></div>
+        <div class="field"><label>Format</label><input data-f="${i}" data-k="format" value="${esc(f.format)}"></div>
+        <div class="field"><label>Frames</label><input data-f="${i}" data-k="frames" value="${esc(f.frames)}"></div>
+      </div>
+      <div class="grid3" style="margin-top:8px">
+        <div class="field"><label>Process</label><input data-f="${i}" data-k="process" value="${esc(f.process)}"></div>
+        <div class="field"><label>Qty (rolls)</label><input type="number" min="0" data-f="${i}" data-k="qty" value="${esc(f.qty)}"></div>
+        <div class="field"><label>Color</label><input type="color" data-f="${i}" data-k="color" value="${toHex(f.color)}"></div>
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <div class="field"><label>Purchased</label><input type="date" data-f="${i}" data-k="purchase" value="${esc(f.purchase)}"></div>
+        <div class="field"><label>Expiry (mo/yr)</label><input type="month" data-f="${i}" data-k="expiry" value="${esc(f.expiry)}"></div>
+      </div>`;
+    box.appendChild(el);
+  });
+}
+
+/* ============================================================
+   RENDER: preview sheets
+   ============================================================ */
+function buildStripHTML(f){
+  const s=state.settings;
+  const sub=[];
+  if(f.iso)              sub.push(`<span class="iso">ISO ${esc(f.iso)}</span>`);
+  const tags=[];
+  if(s.showFormat && f.format)  tags.push(esc(f.format));
+  if(s.showProcess && f.process)tags.push(esc(f.process));
+  if(s.showFrames && f.frames)  tags.push(esc(f.frames)+' exp');
+  const subLine = `${sub.join('')}${tags.length?`<span>${tags.join(' · ')}</span>`:''}`;
+
+  const dateBits=[];
+  if(s.showPurchase && f.purchase) dateBits.push(`<div><span class="k">Bought</span> ${esc(fmtDate(f.purchase))}</div>`);
+  if(s.showExpiry && f.expiry)     dateBits.push(`<div><span class="k">Expires</span> ${esc(fmtMonth(f.expiry))}</div>`);
+  const datesBlock = dateBits.length?`<div class="dates">${dateBits.join('')}</div>`:'';
+
+  const writeLines=[];
+  if(s.blankEvent)    writeLines.push(`<div class="wline"><span class="lab">Event</span><span class="ln"></span></div>`);
+  if(s.blankDateShot) writeLines.push(`<div class="wline"><span class="lab">Date shot</span><span class="ln"></span></div>`);
+  const writeBlock = writeLines.length?`<div class="write">${writeLines.join('')}</div>`:`<div class="write"></div>`;
+
+  const repeat = s.repeatIdentity
+    ? `<div class="ident repeat"><div class="fname">${esc(f.name)}</div><div class="sub">${subLine}</div></div>` : '';
+
+  const accent = s.accent ? `<div class="accent" style="background:${toHex(f.color)}"></div>` : '';
+
+  return `${accent}<div class="pad">
+      <div class="ident">
+        <div class="fname">${esc(f.name)}</div>
+        <div class="sub">${subLine}</div>
+      </div>
+      ${datesBlock}
+      ${writeBlock}
+      ${repeat}
+    </div>`;
+}
+
+function expandedStrips(){
+  const out=[];
+  state.films.forEach(f=>{
+    const n=Math.max(0, parseInt(f.qty,10)||0);
+    for(let i=0;i<n;i++) out.push(f);
+  });
+  return out;
+}
+
+function renderPreview(){
+  const s=state.settings;
+  // push design vars into CSS
+  const root=document.documentElement.style;
+  root.setProperty('--font', s.font);
+  root.setProperty('--fscale', s.fscale);
+  root.setProperty('--zoom', s.zoom);
+
+  const paper=PAPER[s.paper]||PAPER.letter;
+  // clamp geometry so a blank/NaN input can't break the layout
+  const num=(v,def,min,max)=>{ const n=Number(v); const c=Number.isFinite(n)?n:def; return Math.min(max,Math.max(min,c)); };
+  const margin=num(s.margin, DEFAULTS.margin, 0, Math.min(paper.w,paper.h)/2-0.1);
+  const cellW =num(s.stripLen, DEFAULTS.stripLen, 0.25, 100);
+  const cellH =num(s.stripH, DEFAULTS.stripH, 0.15, 100);
+  const gap   =num(s.gap, DEFAULTS.gap, 0, 5);
+  const usableW=Math.max(0.1, paper.w - 2*margin);
+  const usableH=Math.max(0.1, paper.h - 2*margin);
+  // "Full page width": strip length auto-tracks the printable width (page minus margin)
+  const fullW = !!s.fullWidth;
+  const effLen = fullW ? usableW : cellW;
+  const cols=Math.max(1, Math.floor((usableW+gap+1e-6)/(effLen+gap)));
+  const rows=Math.max(1, Math.floor((usableH+gap+1e-6)/(cellH+gap)));
+  const perPage=cols*rows;
+
+  // reflect the auto length into the (now locked) length field + wrap helper
+  const slEl=$('#stripLen'), awEl=$('#applyWraps');
+  if(slEl){ slEl.disabled=fullW; if(fullW) slEl.value=effLen.toFixed(2);
+            else if(document.activeElement!==slEl) slEl.value=cellW; }
+  if(awEl) awEl.disabled=fullW;
+
+  // Full-page sheet with the margin as padding, @page margin:0. Keeps the sheet at
+  // page width so "Fit to page width" can't rescale it. Needs dialog Margins: None.
+  $('#pageStyle').textContent = `@page{size:${s.paper==='a4'?'A4':'8.5in 11in'};margin:0}`;
+
+  const strips=expandedStrips();
+  const sheets=$('#sheets'); sheets.innerHTML='';
+
+  if(strips.length===0){
+    sheets.innerHTML='<div class="empty-note no-print">Add a film with a quantity ≥ 1 to see labels here.</div>';
+    $('#pagecount').textContent='';
+    updateSummary(0,0);
+    return;
+  }
+
+  const pages=Math.ceil(strips.length/perPage);
+  for(let p=0;p<pages;p++){
+    const lbl=document.createElement('div');
+    lbl.className='pagelabel no-print';
+    lbl.textContent=`Sheet ${p+1} of ${pages}`;
+    sheets.appendChild(lbl);
+
+    const sheet=document.createElement('div');
+    sheet.className='sheet';
+    sheet.style.width=paper.w+'in';
+    sheet.style.height=paper.h+'in';
+    sheet.style.padding=margin+'in';   // box-sizing:border-box -> content area = usableW x usableH
+
+    const grid=document.createElement('div');
+    grid.className='grid '+(gap>0?'gapped':'collapsed')+(s.showCut?'':' nocut');
+    grid.style.gridTemplateColumns=`repeat(${cols}, ${effLen}in)`;
+    grid.style.gridAutoRows=cellH+'in';
+    grid.style.gap=gap+'in';
+    grid.style.alignContent='start';
+    grid.style.justifyContent='center';  // center the column(s) so leftover paper = even gutters (safe at 0 margin)
+
+    const slice=strips.slice(p*perPage,(p+1)*perPage);
+    slice.forEach(f=>{
+      const st=document.createElement('div');
+      st.className='strip';
+      st.innerHTML=buildStripHTML(f);
+      grid.appendChild(st);
+    });
+    sheet.appendChild(grid);
+    sheets.appendChild(sheet);
+  }
+  $('#pagecount').textContent=`${strips.length} label${strips.length!==1?'s':''} · ${pages} sheet${pages!==1?'s':''} · ${cols}×${rows} per page`;
+  updateSummary(strips.length,pages);
+  updateWrapHint();
+}
+
+function updateSummary(labels,pages){
+  const films=state.films.length;
+  $('#summary').innerHTML=`<b>${films}</b> film type${films!==1?'s':''} · <b>${labels}</b> label${labels!==1?'s':''} · <b>${pages}</b> sheet${pages!==1?'s':''}`;
+}
+function updateWrapHint(){
+  const s=state.settings;
+  const paper=PAPER[s.paper]||PAPER.letter;
+  const usableW=paper.w-2*(+s.margin), usableH=paper.h-2*(+s.margin);
+  const eff = s.fullWidth ? usableW : (+s.stripLen);   // effective strip length
+  const circ=Math.PI*(+s.diaMm)/25.4;                   // inches per wrap
+  const w=circ>0 ? (eff/circ) : 0;
+  let warn='';
+  if(!s.fullWidth && +s.stripLen>usableW+1e-6) warn=`⚠ Strip length ${(+s.stripLen).toFixed(2)}in exceeds the ${usableW.toFixed(2)}in printable width, so it gets clipped when printed.`;
+  else if(+s.stripH>usableH+1e-6)              warn=`⚠ Strip height ${(+s.stripH).toFixed(2)}in exceeds the ${usableH.toFixed(2)}in printable height, so it gets clipped when printed.`;
+  const el=$('#wrapHint');
+  el.innerHTML = warn
+    ? `<span style="color:var(--danger)">${warn}</span>`
+    : `${s.fullWidth?`full width ${eff.toFixed(2)}in · `:''}≈ ${w.toFixed(1)} wraps around a ${s.diaMm}mm canister  ·  height ${(+s.stripH*25.4).toFixed(0)}mm`;
+}
+
+/* ---------- helpers ---------- */
+function esc(v){ return String(v==null?'':v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function toHex(c){ // normalize to #rrggbb for the color input
+  if(!c) return '#888888';
+  if(/^#[0-9a-f]{6}$/i.test(c)) return c;
+  if(/^#[0-9a-f]{3}$/i.test(c)) return '#'+c.slice(1).split('').map(x=>x+x).join('');
+  return '#888888';
+}
+
+/* ============================================================
+   WIRING
+   ============================================================ */
+// film field edits (event delegation keeps focus while typing)
+$('#films').addEventListener('input',e=>{
+  const t=e.target, i=t.dataset.f, k=t.dataset.k;
+  if(i==null) return;
+  if(t.type==='number'){
+    state.films[i][k] = t.value==='' ? '' : Math.max(0, Math.floor(Number(t.value)) || 0);
+  } else {
+    state.films[i][k] = t.value;
+  }
+  if(k==='color'){ // live-update swatch without full rebuild
+    const sw=t.closest('.film').querySelector('.swatch'); if(sw) sw.style.background=t.value;
+  }
+  renderPreview(); save();
+});
+$('#films').addEventListener('click',e=>{
+  const del=e.target.dataset.del, dup=e.target.dataset.dup;
+  if(del!=null){ state.films.splice(+del,1); renderFilms(); renderPreview(); save(); }
+  else if(dup!=null){ state.films.splice(+dup+1,0,{...state.films[+dup]}); renderFilms(); renderPreview(); save(); }
+});
+$('#addFilm').addEventListener('click',()=>{
+  state.films.push({name:'New film', iso:'400', format:'35mm', frames:'36', process:'C-41', purchase:'', expiry:'', qty:1, color:'#5b9dff'});
+  renderFilms(); renderPreview(); save();
+});
+$('#loadSamples').addEventListener('click',()=>{
+  state.films = state.films.concat(sampleFilms());
+  renderFilms(); renderPreview(); save();
+});
+$('#clearFilms').addEventListener('click',()=>{
+  if(state.films.length===0) return;
+  if(confirm('Remove all '+state.films.length+' film'+(state.films.length!==1?'s':'')+' from the library?')){
+    state.films=[]; renderFilms(); renderPreview(); save();
+  }
+});
+
+// settings inputs (data-set)
+// push current state values into the controls (safe to call repeatedly)
+function syncSettings(){
+  $$('[data-set]').forEach(el=>{
+    const key=el.dataset.set;
+    if(el.type==='checkbox') el.checked=!!state.settings[key];
+    else el.value=state.settings[key];
+  });
+  $('#zoomval').textContent=Math.round(state.settings.zoom*100)+'%';
+  $('#fscaleval').textContent=(+state.settings.fscale).toFixed(2)+'×';
+}
+// attach listeners ONCE at boot (these controls are never rebuilt)
+function bindSettings(){
+  $$('[data-set]').forEach(el=>{
+    const key=el.dataset.set;
+    const isBool=el.type==='checkbox';
+    const isNum =el.type==='number'||el.type==='range';
+    el.addEventListener('input',()=>{
+      let v= isBool?el.checked : isNum?(+el.value):el.value;
+      state.settings[key]=v;
+      if(key==='zoom'){ $('#zoomval').textContent=Math.round(v*100)+'%'; }
+      if(key==='fscale'){ $('#fscaleval').textContent=v.toFixed(2)+'×'; }
+      renderPreview(); save();
+    });
+  });
+}
+
+$('#applyWraps').addEventListener('click',()=>{
+  const s=state.settings;
+  const len=Math.PI*(+s.diaMm)/25.4*(+s.wraps);
+  s.stripLen=+len.toFixed(2);
+  $('#stripLen').value=s.stripLen;
+  renderPreview(); save();
+});
+
+$('#printBtn').addEventListener('click',()=>window.print());
+
+// export / import
+$('#exportBtn').addEventListener('click',()=>{
+  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='filmwrap-library.json';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+});
+$('#importBtn').addEventListener('click',()=>$('#importFile').click());
+$('#importFile').addEventListener('change',e=>{
+  const file=e.target.files[0]; if(!file) return;
+  const r=new FileReader();
+  r.onload=()=>{
+    let data;
+    try{ data=JSON.parse(r.result); }
+    catch(err){ alert('Could not read that file: '+err.message); return; }
+    if(!data || typeof data!=='object'){ alert('That file is not a valid filmwrap library.'); return; }
+    if('films' in data && !Array.isArray(data.films)){ alert("That file's film list is not valid."); return; }
+    if(Array.isArray(data.films)) state.films=sanitizeFilms(data.films);
+    if(data.settings) state.settings=sanitizeSettings(data.settings);
+    // render outside the try so a real render bug isn't reported as a bad file
+    renderFilms(); syncSettings(); renderPreview(); save();
+  };
+  r.readAsText(file);
+  e.target.value='';
+});
+
+// inject the @page style element
+const pageStyle=document.createElement('style'); pageStyle.id='pageStyle';
+document.head.appendChild(pageStyle);
+
+/* ---------- boot ---------- */
+$('#copyYear').textContent = new Date().getFullYear();
+renderFilms();
+bindSettings();
+syncSettings();
+renderPreview();
+</script>
+</body>
+</html>
