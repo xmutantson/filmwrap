@@ -188,6 +188,128 @@ def run_reliability_checks(browser):
     check("legacy: next edit writes current key", stored(page)["films"][0]["name"] == "Migrated film")
     page.context.close()
 
+def run_review_regressions(browser):
+    page = new_page(browser)
+    page.goto(URL)
+    page.click('#addFilm')
+    page.locator('[data-k="name"]').fill('Original')
+    other = page.context.new_page()
+    other.goto(URL)
+    page.locator('[data-k="name"]').fill('Latest saved name')
+    other.wait_for_function("document.querySelector('#saveStatus').textContent.includes('Save conflict')")
+    check('tabs: external save invalidates stale Saved status',
+          other.locator('#saveStatus').get_attribute('data-status') == 'error')
+    other.locator('[data-k="qty"]').fill('2')
+    check('tabs: stale edit preserves latest save and reports conflict',
+          stored(other)['films'][0]['name'] == 'Latest saved name'
+          and stored(other)['films'][0]['qty'] == 1
+          and 'Save conflict' in other.inner_text('#saveStatus'))
+    with other.expect_download() as dl:
+        other.click('#exportBtn')
+    exported = json.loads(Path(dl.value.path()).read_text(encoding='utf-8'))
+    check('tabs: stale tab can export its unsaved work',
+          exported['films'][0]['name'] == 'Original' and exported['films'][0]['qty'] == 2)
+    before = stored(other)
+    other.locator('[data-del]').click()
+    other.click('#undoBtn')
+    check('tabs: delete and undo cannot bypass conflict', stored(other) == before)
+    other.on('dialog', lambda d: d.accept())
+    upload(other, {'films': [{'name': 'Imported conflict', 'qty': 1}]})
+    other.wait_for_function("document.querySelector('[data-k=name]').value === 'Imported conflict'")
+    check('tabs: import cannot bypass conflict', stored(other) == before)
+    other.reload()
+    other.locator('[data-k="qty"]').fill('3')
+    check('tabs: reload adopts latest library and allows saving',
+          stored(other)['films'][0]['name'] == 'Latest saved name'
+          and stored(other)['films'][0]['qty'] == 3
+          and other.locator('#saveStatus').get_attribute('data-status') == 'saved')
+    page.context.close()
+
+    # Same-document mutations do not dispatch storage events: the save itself
+    # must detect changes, removals and clear(), even without event delivery.
+    for operation in ('update', 'remove', 'clear'):
+        page = new_page(browser)
+        page.goto(URL)
+        page.click('#addFilm')
+        page.evaluate("""operation => {
+            if(operation==='clear') localStorage.clear();
+            else if(operation==='remove') localStorage.removeItem('filmwrap.v1');
+            else {
+                const next=JSON.parse(localStorage.getItem('filmwrap.v1'));
+                next.films[0].name='External save';
+                localStorage.setItem('filmwrap.v1',JSON.stringify(next));
+            }
+        }""", operation)
+        before = page.evaluate("localStorage.getItem('filmwrap.v1')")
+        page.locator('[data-k="name"]').fill('Stale edit')
+        check(f'tabs: {operation} detected before write without storage event',
+              page.evaluate("localStorage.getItem('filmwrap.v1')") == before
+              and 'Save conflict' in page.inner_text('#saveStatus'))
+        page.context.close()
+
+    for raw, recovery in (('{corrupt', True),
+                          (json.dumps({'films': [{'name': 'Legacy', 'qty': 1}]}), False)):
+        page = new_page(browser)
+        page.goto(URL)
+        page.evaluate("raw=>localStorage.setItem('filmtube.v2',raw)", raw)
+        page.reload()
+        other = page.context.new_page()
+        other.goto(URL)
+        if recovery:
+            for tab in (page, other):
+                tab.click('#addFilm')
+                tab.on('dialog', lambda d: d.accept())
+            page.locator('[data-k="name"]').fill('Recovered first')
+            page.click('#replaceSaved')
+            before = stored(page)
+            other.click('#replaceSaved')
+            check('tabs: recovery replacement cannot overwrite a newer save',
+                  stored(other) == before and 'Save conflict' in other.inner_text('#saveStatus')
+                  and other.locator('#savedRecovery').is_visible())
+        else:
+            page.locator('[data-k="name"]').fill('Migrated first')
+            before = stored(page)
+            other.locator('[data-k="qty"]').fill('2')
+            check('tabs: legacy migration cannot overwrite a newer save',
+                  stored(other) == before and 'Save conflict' in other.inner_text('#saveStatus'))
+        check('tabs: original legacy data stays intact',
+              page.evaluate("localStorage.getItem('filmtube.v2')") == raw)
+        page.context.close()
+
+    page = new_page(browser)
+    page.goto(URL)
+    page.click('#addFilm')
+    page.locator('[data-k="name"]').fill('Exact fit')
+    set_setting(page, 'zoom', 1)
+    for columns, cuts in ((1, True), (2, True), (2, False)):
+        page.emulate_media(media='screen')
+        set_setting(page, 'fullWidth', columns == 1)
+        if columns == 2:
+            set_setting(page, 'stripLen', 4.25)
+        set_setting(page, 'showCut', cuts)
+        page.locator('[data-k="qty"]').fill(str(11 * columns))
+        for media in ('screen', 'print'):
+            page.emulate_media(media=media)
+            geometry = page.evaluate("""() => {
+                const sheet=document.querySelector('.sheet').getBoundingClientRect();
+                return [...document.querySelectorAll('.strip')].map(el=>{
+                    const r=el.getBoundingClientRect();
+                    return {left:r.left-sheet.left,right:r.right-sheet.right,
+                            top:r.top-sheet.top,bottom:r.bottom-sheet.bottom,
+                            width:r.width,height:r.height};
+                });
+            }""")
+            check(f'exact fit: {columns} columns cuts={cuts} {media} borders stay inside page',
+                  all(g['left'] >= -0.05 and g['right'] <= 0.05
+                      and g['top'] >= -0.05 and g['bottom'] <= 0.05 for g in geometry))
+            check(f'exact fit: {columns} columns cuts={cuts} {media} retains strip dimensions',
+                  all(abs(g['width'] - 816 / columns) < 0.05
+                      and abs(g['height'] - 96) < 0.05 for g in geometry))
+        pdf = pypdf.PdfReader(BytesIO(page.pdf(prefer_css_page_size=True, print_background=True)))
+        check(f'exact fit: {columns} columns cuts={cuts} PDF keeps every label on one page',
+              len(pdf.pages) == 1 and pdf.pages[0].extract_text().count('Exact fit') == 11 * columns)
+    page.context.close()
+
 def run_print_matrix(browser):
     page = new_page(browser)
     page.goto(URL)
@@ -460,6 +582,7 @@ with sync_playwright() as p:
     # Further regression scenarios below use their own clean browser profiles.
     run_reliability_checks(browser)
     run_print_matrix(browser)
+    run_review_regressions(browser)
     check("all pages: no console/page errors", not console_errors, str(console_errors))
     check("offline: no HTTP(S) requests attempted", not network_requests, str(network_requests))
     browser.close()

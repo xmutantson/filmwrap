@@ -42,6 +42,13 @@ this browser. If storage is unavailable or full, you can keep editing and printi
 An unreadable previous save is kept unchanged. Download the original data if
 available, then explicitly choose **Replace saved data** to save the current library.
 
+If another tab changes or removes the saved data, this tab reports a save
+conflict and keeps its edits in memory. Export this tab's work, then reload to
+load the latest saved library. Stale edits, imports, undo, and recovery replacement
+cannot overwrite a changed save. This is a comparison before each localStorage
+write, not a transactional multi-user store; avoid editing simultaneously in
+multiple tabs and keep backups.
+
 Import shows the incoming film and label counts and asks before replacing the
 current library and its settings; it does not merge libraries. Delete, Clear all,
 and Import can each be undone until the next edit or page reload. Keep an exported

@@ -81,10 +81,11 @@
   .sheets-wrap{zoom:var(--zoom,.7);display:flex;flex-direction:column;gap:24px;align-items:center}
   .sheet{background:#fff;color:#000;box-shadow:0 6px 26px #0007;position:relative;overflow:hidden}
   .grid{display:grid;width:100%;height:100%}
-  .grid.collapsed{border-top:1px solid var(--cut);border-left:1px solid var(--cut)}
-  .grid.collapsed .strip{border-right:1px solid var(--cut);border-bottom:1px solid var(--cut)}
+  /* Cut lines stay inside each fixed-size cell and add no grid geometry. */
+  .grid.collapsed .strip{position:relative}
+  .grid.collapsed .strip::after{content:"";position:absolute;inset:0;border:1px solid var(--cut);pointer-events:none}
   .grid.gapped .strip{border:1px dashed var(--cut)}
-  .grid.nocut.collapsed,.grid.nocut.collapsed .strip{border-color:transparent}
+  .grid.nocut.collapsed .strip::after{border-color:transparent}
   .grid.nocut.gapped .strip{border-color:transparent}
 
   /* ---------- A single wrap strip ---------- */
@@ -346,6 +347,7 @@ function normalizeLibrary(raw){
 }
 
 let protectedSave=null;
+let savedSnapshot=null;
 let undoState=null;
 let state=load();
 
@@ -355,6 +357,21 @@ function setSaveStatus(message,status){
   if(el.textContent!==message) el.textContent=message;
   el.dataset.status=status;
 }
+function readSavedSnapshot(){
+  return [KEY,...LEGACY_KEYS].map(key=>localStorage.getItem(key));
+}
+function savedDataChanged(){
+  return JSON.stringify(readSavedSnapshot())!==JSON.stringify(savedSnapshot);
+}
+function showSaveConflict(){
+  setSaveStatus('Save conflict: the saved library changed in another tab. Current changes are not saved. Export a backup of this tab, then reload to use the latest saved library.','error');
+}
+// Also invalidate the status of a tab that has not been edited again yet.
+window.addEventListener('storage',event=>{
+  if(event.key!==null && ![KEY,...LEGACY_KEYS].includes(event.key)) return;
+  try{ if(savedDataChanged()) showSaveConflict(); }
+  catch(e){ setSaveStatus('Could not read browser storage. Export a backup before closing this page.','error'); }
+});
 function save(){
   if(protectedSave){
     setSaveStatus(protectedSave.raw===null
@@ -363,7 +380,12 @@ function save(){
     return false;
   }
   try{
-    localStorage.setItem(KEY,JSON.stringify(state));
+    // Compare immediately before every write, even before a queued storage event
+    // arrives. A stale tab keeps its in-memory edits but cannot replace the save.
+    if(savedDataChanged()){ showSaveConflict(); return false; }
+    const serialized=JSON.stringify(state);
+    localStorage.setItem(KEY,serialized);
+    savedSnapshot[0]=serialized;
     setSaveStatus('Saved in this browser. Export a backup to keep a separate copy.','saved');
     return true;
   }catch(e){
@@ -375,11 +397,12 @@ function load(){
   const empty={films:[],settings:{...DEFAULTS}};
   let saved=null,source=KEY;
   try{
-    saved=localStorage.getItem(KEY);
+    savedSnapshot=readSavedSnapshot();
+    saved=savedSnapshot[0];
     if(saved===null){
-      for(const k of LEGACY_KEYS){
-        const value=localStorage.getItem(k);
-        if(value!==null){saved=value;source=k;break;}
+      for(let i=0;i<LEGACY_KEYS.length;i++){
+        const value=savedSnapshot[i+1];
+        if(value!==null){saved=value;source=LEGACY_KEYS[i];break;}
       }
     }
   }catch(e){
@@ -698,6 +721,10 @@ $('#downloadSaved').addEventListener('click',()=>{
 $('#replaceSaved').addEventListener('click',()=>{
   if(!protectedSave||!confirm('Replace the previous saved data with the library currently on screen? Download any recoverable saved data first.')) return;
   const previous=protectedSave;
+  if(savedSnapshot===null){
+    try{ savedSnapshot=readSavedSnapshot(); }
+    catch(e){ setSaveStatus('Could not read browser storage. Current changes are not saved. Export a backup and reload.','error'); return; }
+  }
   protectedSave=null;
   if(save()) $('#savedRecovery').hidden=true;
   else protectedSave=previous; // a failed write must not discard the recovery copy
