@@ -37,7 +37,7 @@
   .sec{border-bottom:1px solid var(--line);padding:14px 16px}
   .sec h2{font-size:12px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin:0 0 10px}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
-  .field{display:flex;flex-direction:column;gap:4px}
+  .field{display:flex;flex-direction:column;gap:4px;min-width:0}
   .field label{font-size:11px;color:var(--muted)}
   .field.grow{flex:1;min-width:0}
   input,select{background:var(--field);border:1px solid var(--line);color:var(--text);
@@ -58,7 +58,7 @@
   .film{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
   .film .top{display:flex;align-items:center;gap:8px;margin-bottom:10px}
   .film .swatch{width:14px;height:14px;border-radius:4px;border:1px solid #0006;flex:none}
-  .film .name-in{font-weight:600}
+  .film .name-in{font-weight:600;min-width:0}
   .film .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   .film .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
   .film .acts{display:flex;gap:6px;margin-left:auto}
@@ -69,6 +69,10 @@
   .twocol{display:grid;grid-template-columns:1fr 1fr;gap:2px 16px}
   .summary{font-size:12px;color:var(--muted)}
   .summary b{color:var(--text)}
+  .save-status[data-status=error]{color:var(--danger)}
+  .save-status[data-status=saved]{color:var(--ok)}
+  .recovery{margin-top:8px}
+  [hidden]{display:none !important}
   .seg{display:flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden}
   .seg button{flex:1;background:var(--field);border:none;color:var(--muted);padding:7px;cursor:pointer;font-size:12px}
   .seg button.on{background:var(--accent2);color:#fff}
@@ -107,6 +111,13 @@
   .pagelabel{color:#cdd3df;font-size:12px;margin:-12px 0 -6px}
   .empty-note{color:#cdd3df;text-align:center;margin-top:40px}
 
+  @media screen and (max-width:800px){
+    .app{display:block;height:auto;overflow:visible}
+    .panel{width:100%;min-width:0;height:auto;border-right:0}
+    .preview{display:block;height:auto;min-height:60vh;padding:16px}
+    .sheets-wrap{align-items:flex-start;width:max-content}
+  }
+
   /* ---------- Print ---------- */
   @media print{
     .panel,.toolbar,.no-print,.pagelabel{display:none !important}
@@ -138,6 +149,15 @@
         <input type="file" id="importFile" accept="application/json" hidden>
       </div>
       <div class="summary" id="summary" style="margin-top:10px"></div>
+      <div class="hint save-status" id="saveStatus" role="status" aria-live="polite"></div>
+      <div class="row recovery" id="savedRecovery" hidden>
+        <button class="btn tiny" id="downloadSaved">Download saved data</button>
+        <button class="btn tiny" id="replaceSaved">Replace saved data</button>
+      </div>
+      <div class="row recovery" id="undoRow" hidden>
+        <span class="hint" id="undoNotice" role="status"></span>
+        <button class="btn tiny" id="undoBtn">Undo</button>
+      </div>
     </div>
 
     <!-- Film library -->
@@ -157,41 +177,41 @@
       <h2>Strip size &amp; paper</h2>
       <div class="row">
         <div class="field grow">
-          <label>Strip length (in)</label>
-          <input type="number" step="0.1" min="2" data-set="stripLen" id="stripLen">
+          <label for="stripLen">Strip length (in)</label>
+          <input type="number" step="0.1" min="0.5" max="100" data-set="stripLen" id="stripLen">
         </div>
         <div class="field grow">
-          <label>Strip height (in)</label>
-          <input type="number" step="0.05" min="0.5" data-set="stripH" id="stripH">
+          <label for="stripH">Strip height (in)</label>
+          <input type="number" step="0.05" min="0.25" max="100" data-set="stripH" id="stripH">
         </div>
       </div>
       <label class="switchrow" style="margin-top:6px"><input type="checkbox" data-set="fullWidth"> Stretch strips to full page width (auto length)</label>
       <div class="hint" id="wrapHint"></div>
       <div class="row" style="margin-top:8px">
         <div class="field">
-          <label>Canister Ø (mm)</label>
+          <label for="diaMm">Canister Ø (mm)</label>
           <input type="number" step="0.5" data-set="diaMm" id="diaMm" style="width:90px">
         </div>
         <div class="field">
-          <label>Wraps</label>
+          <label for="wraps">Wraps</label>
           <input type="number" step="0.25" data-set="wraps" id="wraps" style="width:80px">
         </div>
         <button class="btn tiny" id="applyWraps" style="margin-bottom:1px">↳ set length</button>
       </div>
       <div class="row" style="margin-top:10px">
         <div class="field">
-          <label>Paper</label>
+          <label for="paper">Paper</label>
           <select data-set="paper" id="paper">
             <option value="letter">US Letter</option>
             <option value="a4">A4</option>
           </select>
         </div>
         <div class="field">
-          <label>Margin (in)</label>
+          <label for="margin">Margin (in)</label>
           <input type="number" step="0.05" min="0" data-set="margin" id="margin" style="width:90px">
         </div>
         <div class="field">
-          <label>Gap (in)</label>
+          <label for="gap">Gap (in)</label>
           <input type="number" step="0.02" min="0" data-set="gap" id="gap" style="width:80px">
         </div>
       </div>
@@ -218,7 +238,7 @@
     <div class="sec">
       <h2>Appearance</h2>
       <div class="field" style="margin-bottom:10px">
-        <label>Font</label>
+        <label for="font">Font</label>
         <select data-set="font" id="font">
           <option value="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">Sans (system)</option>
           <option value="Georgia,'Times New Roman',serif">Serif</option>
@@ -226,7 +246,7 @@
         </select>
       </div>
       <div class="field">
-        <label>Text size <span id="fscaleval"></span></label>
+        <label for="fscale">Text size <span id="fscaleval"></span></label>
         <input type="range" min="0.7" max="1.4" step="0.05" data-set="fscale" id="fscale">
       </div>
     </div>
@@ -236,7 +256,7 @@
       <div class="hint" style="line-height:1.55">
         1. Add your films, ISO, dates &amp; quantities above.<br>
         2. Tune strip length so it wraps your canister about 2-3 times.<br>
-        3. Hit <b>Print sheet</b>. In the dialog set <b>Margins: None</b> and turn on <b>"Print backgrounds"</b> so the color bars print. Scale can be <b>100%</b> or <b>Fit to page width</b>; both print at the right size.<br>
+        3. Hit <b>Print sheet</b>. Match the paper size, set <b>Margins: None</b> and <b>Scale: 100%</b>, and turn on <b>"Print backgrounds"</b>. Measure a test strip before printing a full batch; printer settings can change the size.<br>
         4. Cut along the lines, write the event/date later, wrap around the film &amp; tuck into the tube.
       </div>
     </div>
@@ -249,7 +269,7 @@
   <!-- ===================== PREVIEW ===================== -->
   <main class="preview">
     <div class="row no-print" style="gap:12px;align-items:center;margin-bottom:14px;color:#cdd3df">
-      <span style="font-size:12px">Zoom</span>
+      <label for="zoom" style="font-size:12px">Zoom</label>
       <input type="range" min="0.35" max="1.2" step="0.05" id="zoom" data-set="zoom" style="width:160px">
       <span id="zoomval" style="font-size:12px;width:40px"></span>
       <span id="pagecount" style="font-size:12px;margin-left:12px"></span>
@@ -285,26 +305,25 @@ const DEFAULTS={
 };
 
 /* ---------- Sanitizers: keep bad/edited/old saved data from poisoning render ---------- */
-const NUM_KEYS=['stripLen','stripH','diaMm','wraps','margin','gap','fscale','zoom'];
+const NUM_LIMITS={stripLen:[0.5,100],stripH:[0.25,100],diaMm:[1,1000],wraps:[0.1,100],
+  margin:[0,4.15],gap:[0,5],fscale:[0.7,1.4],zoom:[0.35,1.2]};
 const BOOL_KEYS=['showPurchase','showExpiry','showProcess','showFormat','showFrames','blankEvent','blankDateShot','repeatIdentity','accent','showCut','fullWidth'];
+const isRecord=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 function sanitizeSettings(raw){
-  const s={...DEFAULTS, ...(raw&&typeof raw==='object'?raw:{})};
-  for(const k of NUM_KEYS){ const n=Number(s[k]); s[k]=Number.isFinite(n)?n:DEFAULTS[k]; }
-  s.stripLen=Math.max(0.5,s.stripLen);
-  s.stripH  =Math.max(0.25,s.stripH);
-  s.diaMm   =Math.max(1,s.diaMm);
-  s.wraps   =Math.max(0.1,s.wraps);
-  s.margin  =Math.max(0,s.margin);
-  s.gap     =Math.min(5,Math.max(0,s.gap));
-  s.fscale  =Math.min(1.4,Math.max(0.7,s.fscale));
-  s.zoom    =Math.min(1.2,Math.max(0.35,s.zoom));
+  const s={...DEFAULTS};
+  if(isRecord(raw)) Object.keys(DEFAULTS).forEach(k=>{ if(k in raw) s[k]=raw[k]; });
+  for(const [k,[min,max]] of Object.entries(NUM_LIMITS)){
+    const n=s[k]===null||s[k]===''?NaN:Number(s[k]);
+    s[k]=Math.min(max,Math.max(min,Number.isFinite(n)?n:DEFAULTS[k]));
+  }
   if(s.paper!=='letter'&&s.paper!=='a4') s.paper='letter';
-  BOOL_KEYS.forEach(k=>{ s[k]=!!s[k]; });
-  if(typeof s.font!=='string'||!s.font) s.font=DEFAULTS.font;
+  s.margin=Math.min(s.margin,Math.min(PAPER[s.paper].w,PAPER[s.paper].h)/2-0.1);
+  BOOL_KEYS.forEach(k=>{ if(typeof s[k]!=='boolean') s[k]=DEFAULTS[k]; });
+  if(!$$('#font option').some(el=>el.value===s.font)) s.font=DEFAULTS.font;
   return s;
 }
 function sanitizeFilms(arr){
-  if(!Array.isArray(arr)) return sampleFilms();
+  if(!Array.isArray(arr)) return [];
   return arr.map(f=>{
     const o=(f&&typeof f==='object')?f:{};
     const q=Math.floor(Number(o.qty));
@@ -318,18 +337,88 @@ function sanitizeFilms(arr){
   });
 }
 
-let state = load() || {films:[], settings:{...DEFAULTS}};   // start empty; use "Load sample films" for examples
-// backfill + sanitize older/edited saved data
-state.settings = sanitizeSettings(state.settings);
-state.films    = sanitizeFilms(state.films);
+function normalizeLibrary(raw){
+  if(!isRecord(raw)||!Array.isArray(raw.films)||raw.films.some(f=>!isRecord(f)))
+    throw new Error('A filmwrap library must contain a list of film records.');
+  if(raw.settings!==undefined&&!isRecord(raw.settings))
+    throw new Error('The library settings must be an object.');
+  return {films:sanitizeFilms(raw.films),settings:sanitizeSettings(raw.settings)};
+}
+
+let protectedSave=null;
+let undoState=null;
+let state=load();
 
 /* ---------- Persistence ---------- */
-function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
-function load(){ try{
-  let s=localStorage.getItem(KEY);
-  if(!s){ for(const k of LEGACY_KEYS){ const o=localStorage.getItem(k); if(o){ s=o; break; } } }
-  return s?JSON.parse(s):null;
-}catch(e){ return null; } }
+function setSaveStatus(message,status){
+  const el=$('#saveStatus');
+  if(el.textContent!==message) el.textContent=message;
+  el.dataset.status=status;
+}
+function save(){
+  if(protectedSave){
+    setSaveStatus(protectedSave.raw===null
+      ? 'Browser storage could not be read. Current changes are not saved. Try reloading before choosing Replace saved data.'
+      : 'Previous saved data could not be read. Download it before choosing Replace saved data. Current changes are not saved.','error');
+    return false;
+  }
+  try{
+    localStorage.setItem(KEY,JSON.stringify(state));
+    setSaveStatus('Saved in this browser. Export a backup to keep a separate copy.','saved');
+    return true;
+  }catch(e){
+    setSaveStatus('Changes are not saved. Browser storage is unavailable or full. Export a backup before closing this page.','error');
+    return false;
+  }
+}
+function load(){
+  const empty={films:[],settings:{...DEFAULTS}};
+  let saved=null,source=KEY;
+  try{
+    saved=localStorage.getItem(KEY);
+    if(saved===null){
+      for(const k of LEGACY_KEYS){
+        const value=localStorage.getItem(k);
+        if(value!==null){saved=value;source=k;break;}
+      }
+    }
+  }catch(e){
+    protectedSave={source:KEY,raw:null};
+    $('#savedRecovery').hidden=false;
+    $('#downloadSaved').hidden=true;
+    setSaveStatus('Could not access the saved library. Export any changes before closing this page.','error');
+    return empty;
+  }
+  if(saved===null){
+    setSaveStatus('Your library will save in this browser. Export keeps a separate backup.','idle');
+    return empty;
+  }
+  try{
+    const library=normalizeLibrary(JSON.parse(saved));
+    setSaveStatus('Loaded from this browser. Export a backup to keep a separate copy.','saved');
+    return library;
+  }catch(e){
+    protectedSave={source,raw:saved};
+    $('#savedRecovery').hidden=false;
+    setSaveStatus('Previous saved data could not be read. It has been kept unchanged; download it before replacing it.','error');
+    return empty;
+  }
+}
+
+/* One destructive action can be undone until the next edit or reload. */
+function clearUndo(){ undoState=null; $('#undoRow').hidden=true; }
+function rememberUndo(action){
+  undoState=JSON.parse(JSON.stringify(state));
+  $('#undoNotice').textContent=action+' Undo is available until the next edit or reload.';
+  $('#undoRow').hidden=false;
+}
+function downloadJSON(text,name){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type:'application/json'}));
+  a.download=name;
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
 
 /* ---------- Date formatting ---------- */
 function monthName(n){ return (Number.isInteger(n)&&n>=1&&n<=12)?MONTHS[n-1]:null; }
@@ -360,7 +449,7 @@ function renderFilms(){
     el.innerHTML=`
       <div class="top">
         <span class="swatch" style="background:${toHex(f.color)}"></span>
-        <input class="name-in" data-f="${i}" data-k="name" value="${esc(f.name)}" placeholder="Film name" style="flex:1">
+        <input class="name-in" aria-label="Film name" data-f="${i}" data-k="name" value="${esc(f.name)}" placeholder="Film name" style="flex:1">
         <div class="acts">
           <button class="btn tiny" data-dup="${i}" title="Duplicate">⧉</button>
           <button class="btn tiny danger" data-del="${i}" title="Delete">✕</button>
@@ -381,6 +470,13 @@ function renderFilms(){
         <div class="field"><label>Expiry (mo/yr)</label><input type="month" data-f="${i}" data-k="expiry" value="${esc(f.expiry)}"></div>
       </div>`;
     box.appendChild(el);
+    $$('.field',el).forEach(field=>{
+      const input=$('input',field),label=$('label',field);
+      input.id=`film-${i}-${input.dataset.k}`;
+      label.htmlFor=input.id;
+    });
+    $('[data-dup]',el).setAttribute('aria-label','Duplicate '+(f.name||'film'));
+    $('[data-del]',el).setAttribute('aria-label','Delete '+(f.name||'film'));
   });
 }
 
@@ -432,6 +528,15 @@ function expandedStrips(){
   return out;
 }
 
+function geometry(s){
+  const paper=PAPER[s.paper];
+  const {margin,stripH:cellH,gap,fullWidth:fullW}=s;
+  const usableW=paper.w-2*margin,usableH=paper.h-2*margin;
+  const effLen=fullW?usableW:s.stripLen;
+  const cols=Math.max(1,Math.floor((usableW+gap+1e-6)/(effLen+gap)));
+  const rows=Math.max(1,Math.floor((usableH+gap+1e-6)/(cellH+gap)));
+  return {paper,margin,cellH,gap,fullW,usableW,usableH,effLen,cols,rows,perPage:cols*rows};
+}
 function renderPreview(){
   const s=state.settings;
   // push design vars into CSS
@@ -440,30 +545,18 @@ function renderPreview(){
   root.setProperty('--fscale', s.fscale);
   root.setProperty('--zoom', s.zoom);
 
-  const paper=PAPER[s.paper]||PAPER.letter;
-  // clamp geometry so a blank/NaN input can't break the layout
-  const num=(v,def,min,max)=>{ const n=Number(v); const c=Number.isFinite(n)?n:def; return Math.min(max,Math.max(min,c)); };
-  const margin=num(s.margin, DEFAULTS.margin, 0, Math.min(paper.w,paper.h)/2-0.1);
-  const cellW =num(s.stripLen, DEFAULTS.stripLen, 0.25, 100);
-  const cellH =num(s.stripH, DEFAULTS.stripH, 0.15, 100);
-  const gap   =num(s.gap, DEFAULTS.gap, 0, 5);
-  const usableW=Math.max(0.1, paper.w - 2*margin);
-  const usableH=Math.max(0.1, paper.h - 2*margin);
-  // "Full page width": strip length auto-tracks the printable width (page minus margin)
-  const fullW = !!s.fullWidth;
-  const effLen = fullW ? usableW : cellW;
-  const cols=Math.max(1, Math.floor((usableW+gap+1e-6)/(effLen+gap)));
-  const rows=Math.max(1, Math.floor((usableH+gap+1e-6)/(cellH+gap)));
-  const perPage=cols*rows;
+  const layout=geometry(s);
+  const {paper,margin,cellH,gap,fullW,effLen,cols,rows,perPage}=layout;
 
   // reflect the auto length into the (now locked) length field + wrap helper
   const slEl=$('#stripLen'), awEl=$('#applyWraps');
   if(slEl){ slEl.disabled=fullW; if(fullW) slEl.value=effLen.toFixed(2);
-            else if(document.activeElement!==slEl) slEl.value=cellW; }
+            else if(document.activeElement!==slEl) slEl.value=s.stripLen; }
   if(awEl) awEl.disabled=fullW;
+  updateWrapHint(layout);
 
   // Full-page sheet with the margin as padding, @page margin:0. Keeps the sheet at
-  // page width so "Fit to page width" can't rescale it. Needs dialog Margins: None.
+  // page width. Print with matching paper, 100% scale and dialog Margins: None.
   $('#pageStyle').textContent = `@page{size:${s.paper==='a4'?'A4':'8.5in 11in'};margin:0}`;
 
   const strips=expandedStrips();
@@ -509,18 +602,15 @@ function renderPreview(){
   }
   $('#pagecount').textContent=`${strips.length} label${strips.length!==1?'s':''} · ${pages} sheet${pages!==1?'s':''} · ${cols}×${rows} per page`;
   updateSummary(strips.length,pages);
-  updateWrapHint();
 }
 
 function updateSummary(labels,pages){
   const films=state.films.length;
   $('#summary').innerHTML=`<b>${films}</b> film type${films!==1?'s':''} · <b>${labels}</b> label${labels!==1?'s':''} · <b>${pages}</b> sheet${pages!==1?'s':''}`;
 }
-function updateWrapHint(){
+function updateWrapHint(layout){
   const s=state.settings;
-  const paper=PAPER[s.paper]||PAPER.letter;
-  const usableW=paper.w-2*(+s.margin), usableH=paper.h-2*(+s.margin);
-  const eff = s.fullWidth ? usableW : (+s.stripLen);   // effective strip length
+  const {usableW,usableH,effLen:eff}=layout;
   const circ=Math.PI*(+s.diaMm)/25.4;                   // inches per wrap
   const w=circ>0 ? (eff/circ) : 0;
   let warn='';
@@ -548,6 +638,7 @@ function toHex(c){ // normalize to #rrggbb for the color input
 $('#films').addEventListener('input',e=>{
   const t=e.target, i=t.dataset.f, k=t.dataset.k;
   if(i==null) return;
+  clearUndo();
   if(t.type==='number'){
     state.films[i][k] = t.value==='' ? '' : Math.max(0, Math.floor(Number(t.value)) || 0);
   } else {
@@ -556,35 +647,74 @@ $('#films').addEventListener('input',e=>{
   if(k==='color'){ // live-update swatch without full rebuild
     const sw=t.closest('.film').querySelector('.swatch'); if(sw) sw.style.background=t.value;
   }
+  if(k==='name'){
+    const card=t.closest('.film');
+    $('[data-dup]',card).setAttribute('aria-label','Duplicate '+(t.value||'film'));
+    $('[data-del]',card).setAttribute('aria-label','Delete '+(t.value||'film'));
+  }
   renderPreview(); save();
 });
+function focusFilm(i=0){
+  const names=$$('[data-k="name"]');
+  (names[Math.min(i,names.length-1)]||$('#addFilm')).focus();
+}
 $('#films').addEventListener('click',e=>{
   const del=e.target.dataset.del, dup=e.target.dataset.dup;
-  if(del!=null){ state.films.splice(+del,1); renderFilms(); renderPreview(); save(); }
-  else if(dup!=null){ state.films.splice(+dup+1,0,{...state.films[+dup]}); renderFilms(); renderPreview(); save(); }
+  if(del!=null){
+    rememberUndo('Film deleted.');
+    state.films.splice(+del,1); renderFilms(); renderPreview(); save(); focusFilm(+del);
+  }else if(dup!=null){
+    clearUndo();
+    state.films.splice(+dup+1,0,{...state.films[+dup]}); renderFilms(); renderPreview(); save(); focusFilm(+dup+1);
+  }
 });
 $('#addFilm').addEventListener('click',()=>{
+  clearUndo();
   state.films.push({name:'New film', iso:'400', format:'35mm', frames:'36', process:'C-41', purchase:'', expiry:'', qty:1, color:'#5b9dff'});
-  renderFilms(); renderPreview(); save();
+  renderFilms(); renderPreview(); save(); focusFilm(state.films.length-1);
 });
 $('#loadSamples').addEventListener('click',()=>{
+  clearUndo();
   state.films = state.films.concat(sampleFilms());
   renderFilms(); renderPreview(); save();
 });
 $('#clearFilms').addEventListener('click',()=>{
   if(state.films.length===0) return;
   if(confirm('Remove all '+state.films.length+' film'+(state.films.length!==1?'s':'')+' from the library?')){
-    state.films=[]; renderFilms(); renderPreview(); save();
+    rememberUndo('Library cleared.');
+    state.films=[]; renderFilms(); renderPreview(); save(); $('#addFilm').focus();
   }
+});
+$('#undoBtn').addEventListener('click',()=>{
+  if(!undoState) return;
+  state=undoState;
+  clearUndo();
+  renderFilms(); syncSettings(); renderPreview(); save(); focusFilm();
+});
+$('#downloadSaved').addEventListener('click',()=>{
+  if(protectedSave&&protectedSave.raw!==null)
+    downloadJSON(protectedSave.raw,'filmwrap-saved-recovery.json');
+});
+$('#replaceSaved').addEventListener('click',()=>{
+  if(!protectedSave||!confirm('Replace the previous saved data with the library currently on screen? Download any recoverable saved data first.')) return;
+  const previous=protectedSave;
+  protectedSave=null;
+  if(save()) $('#savedRecovery').hidden=true;
+  else protectedSave=previous; // a failed write must not discard the recovery copy
 });
 
 // settings inputs (data-set)
 // push current state values into the controls (safe to call repeatedly)
 function syncSettings(){
+  const s=state.settings;
   $$('[data-set]').forEach(el=>{
     const key=el.dataset.set;
-    if(el.type==='checkbox') el.checked=!!state.settings[key];
-    else el.value=state.settings[key];
+    if(el.type==='checkbox') el.checked=s[key];
+    else el.value=key==='stripLen'&&s.fullWidth?geometry(s).effLen.toFixed(2):s[key];
+    if(NUM_LIMITS[key]){
+      el.min=NUM_LIMITS[key][0];
+      el.max=key==='margin'?Math.min(PAPER[s.paper].w,PAPER[s.paper].h)/2-0.1:NUM_LIMITS[key][1];
+    }
   });
   $('#zoomval').textContent=Math.round(state.settings.zoom*100)+'%';
   $('#fscaleval').textContent=(+state.settings.fscale).toFixed(2)+'×';
@@ -595,21 +725,39 @@ function bindSettings(){
     const key=el.dataset.set;
     const isBool=el.type==='checkbox';
     const isNum =el.type==='number'||el.type==='range';
-    el.addEventListener('input',()=>{
-      let v= isBool?el.checked : isNum?(+el.value):el.value;
-      state.settings[key]=v;
-      if(key==='zoom'){ $('#zoomval').textContent=Math.round(v*100)+'%'; }
-      if(key==='fscale'){ $('#fscaleval').textContent=v.toFixed(2)+'×'; }
-      renderPreview(); save();
-    });
+    const apply=(commit)=>{
+      // Empty/incomplete numbers are drafts, not zero. Restore the last valid value on blur.
+      if(isNum&&(el.value===''||!Number.isFinite(el.valueAsNumber))){
+        if(commit) syncSettings();
+        return;
+      }
+      const v=isBool?el.checked:isNum?el.valueAsNumber:el.value;
+      const next=sanitizeSettings({...state.settings,[key]:v});
+      if(isNum&&!commit&&next[key]!==v) return;
+      const changed=Object.keys(DEFAULTS).some(k=>next[k]!==state.settings[k]);
+      if(changed){ clearUndo(); state.settings=next; }
+      if(commit||key==='paper') syncSettings();
+      if(key==='zoom'){
+        document.documentElement.style.setProperty('--zoom',state.settings.zoom);
+        $('#zoomval').textContent=Math.round(state.settings.zoom*100)+'%';
+      }else{
+        $('#fscaleval').textContent=state.settings.fscale.toFixed(2)+'×';
+        renderPreview();
+      }
+      if(changed) save();
+    };
+    el.addEventListener('input',()=>apply(false));
+    el.addEventListener('change',()=>apply(true));
+    if(isNum) el.addEventListener('blur',()=>syncSettings());
   });
 }
 
 $('#applyWraps').addEventListener('click',()=>{
+  clearUndo();
   const s=state.settings;
   const len=Math.PI*(+s.diaMm)/25.4*(+s.wraps);
-  s.stripLen=+len.toFixed(2);
-  $('#stripLen').value=s.stripLen;
+  state.settings=sanitizeSettings({...s,stripLen:+len.toFixed(2)});
+  syncSettings();
   renderPreview(); save();
 });
 
@@ -617,12 +765,7 @@ $('#printBtn').addEventListener('click',()=>window.print());
 
 // export / import
 $('#exportBtn').addEventListener('click',()=>{
-  const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download='filmwrap-library.json';
-  a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  downloadJSON(JSON.stringify(state,null,2),'filmwrap-library.json');
 });
 $('#importBtn').addEventListener('click',()=>$('#importFile').click());
 $('#importFile').addEventListener('change',e=>{
@@ -630,15 +773,16 @@ $('#importFile').addEventListener('change',e=>{
   const r=new FileReader();
   r.onload=()=>{
     let data;
-    try{ data=JSON.parse(r.result); }
+    try{ data=normalizeLibrary(JSON.parse(r.result)); }
     catch(err){ alert('Could not read that file: '+err.message); return; }
-    if(!data || typeof data!=='object'){ alert('That file is not a valid filmwrap library.'); return; }
-    if('films' in data && !Array.isArray(data.films)){ alert("That file's film list is not valid."); return; }
-    if(Array.isArray(data.films)) state.films=sanitizeFilms(data.films);
-    if(data.settings) state.settings=sanitizeSettings(data.settings);
+    const labels=data.films.reduce((n,f)=>n+f.qty,0);
+    if(!confirm(`Import ${data.films.length} film types (${labels} labels) and their settings? This replaces the current library. Undo is available until the next edit or reload.`)) return;
+    rememberUndo('Library imported.');
+    state=data;
     // render outside the try so a real render bug isn't reported as a bad file
-    renderFilms(); syncSettings(); renderPreview(); save();
+    renderFilms(); syncSettings(); renderPreview(); save(); focusFilm();
   };
+  r.onerror=()=>alert('Could not read that file. Your current library has not changed.');
   r.readAsText(file);
   e.target.value='';
 });

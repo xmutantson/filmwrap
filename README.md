@@ -27,10 +27,30 @@ export/import it as JSON.
 
 ### Print settings
 
-In the browser print dialog, set **Margins: None** and turn on **Print
-backgrounds** (otherwise the color accent bars don't print). Scale can be 100% or
-"Fit to page width"; both come out at the right physical size, since the sheet is
-laid out in real inches.
+In the browser print dialog, match the paper size, set **Margins: None** and
+**Scale: 100%**, and turn on **Print backgrounds** for the color accent bars.
+The sheet uses real inches, but browser and printer settings can still rescale or
+clip it. Measure a test strip before printing a full batch. If your printer cannot
+print to the edge, increase the app's margin while leaving the dialog margin at
+None.
+
+### Saving and recovery
+
+The save status below the print controls tells you whether changes were saved in
+this browser. If storage is unavailable or full, you can keep editing and printing;
+**Export a backup before closing the page** so you don't lose the current work.
+An unreadable previous save is kept unchanged. Download the original data if
+available, then explicitly choose **Replace saved data** to save the current library.
+
+Import shows the incoming film and label counts and asks before replacing the
+current library and its settings; it does not merge libraries. Delete, Clear all,
+and Import can each be undone until the next edit or page reload. Keep an exported
+backup for recovery beyond that point.
+
+Size controls keep a single accepted value for the preview, export, and reload.
+An empty number field restores its last valid value when you leave it; out-of-range
+values are clamped when committed. Dimensions outside the paper's usable area
+still show a clipping warning.
 
 ## Features
 
@@ -44,22 +64,31 @@ laid out in real inches.
   font / text size, and toggles for which fields print.
 - Saves to the browser automatically, with JSON export/import for backups or moving
   between machines.
+- Reports save failures, protects unreadable saved data, and offers undo after
+  deleting, clearing, or importing a library.
+- Labeled controls, a stacked layout on narrow screens, and preview zoom without
+  rebuilding the labels.
 
 ## Privacy
 
 It runs entirely offline and makes no network requests. The library lives in your
-browser's `localStorage`. Export gives you a JSON backup; import restores it or
-copies it to another browser.
+browser's `localStorage`, not in the HTML file. Moving the file or using another
+browser can give it a different storage location. Export gives you a JSON backup;
+import restores it or copies it to another browser.
 
 ## Tests
 
 It's plain HTML/CSS/JS in one file, so just edit `filmwrap.html`. There's a
 Playwright suite (`test_filmwrap.py`) that drives the page in headless Chromium and
-checks the behavior, including generating a print PDF and asserting it's 3 pages of
-8.5x11in with no blank pages.
+checks editing, persistence failures, import/delete recovery, and geometry after
+reload. It verifies all 23 sample labels in a three-page Letter PDF and a separate
+A4 PDF with margins, gaps, two columns, and a partially filled final page. All
+test profiles are temporary, fixtures use synthetic data, and HTTP(S) requests are
+blocked and reported as failures. Physical printer output still needs a measured
+test strip.
 
 ```bash
-pip install playwright pypdf
+pip install -r requirements-dev.txt
 playwright install chromium
 python test_filmwrap.py
 ```
