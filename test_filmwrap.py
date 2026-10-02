@@ -1,9 +1,11 @@
 """
 Functional tests for filmwrap.html. Drives the real page in headless Chromium.
-Run: python test_filmwrap.py   (pip install playwright pypdf; playwright install chromium)
+Run: python test_filmwrap.py   (pip install -r requirements-dev.txt; playwright install chromium)
 """
-import json, tempfile, os, sys
+import json, sys
+from io import BytesIO
 from pathlib import Path
+import pypdf
 from playwright.sync_api import sync_playwright
 
 try:
@@ -22,24 +24,327 @@ def check(name, ok, detail=""):
 def approx(a, b, tol=0.06):
     return abs(a - b) <= tol * max(abs(b), 1e-9)
 
-def pdf_page_count(pdf_bytes):
-    try:
-        import pypdf
-        from io import BytesIO
-        return len(pypdf.PdfReader(BytesIO(pdf_bytes)).pages)
-    except Exception:
-        import re
-        counts = [int(m) for m in re.findall(rb'/Count\s+(\d+)', pdf_bytes)]
-        return max(counts) if counts else -1
+console_errors = []
+network_requests = []
+
+def new_page(browser):
+    """Every scenario uses an ephemeral profile and blocks external requests."""
+    ctx = browser.new_context()
+    def offline(route):
+        if route.request.url.startswith(("http:", "https:")):
+            network_requests.append(route.request.url)
+            route.abort()
+        else:
+            route.continue_()
+    ctx.route("**/*", offline)
+    page = ctx.new_page()
+    page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: console_errors.append("pageerror: " + str(e)))
+    return page
+
+def upload(page, data):
+    # In-memory files cannot collide with another process's temporary files.
+    with page.expect_event("dialog"):
+        page.set_input_files("#importFile", {
+            "name": "test-library.json", "mimeType": "application/json",
+            "buffer": json.dumps(data).encode("utf-8"),
+        })
+
+def stored(page):
+    return page.evaluate("JSON.parse(localStorage.getItem('filmwrap.v1'))")
+
+def set_setting(page, key, value):
+    el = page.locator(f'[data-set="{key}"]')
+    kind = el.get_attribute("type")
+    if kind == "checkbox":
+        el.set_checked(value)
+    elif el.evaluate("el => el.tagName") == "SELECT":
+        el.select_option(value)
+    else:
+        el.fill(str(value))
+        el.dispatch_event("change")
+
+def run_reliability_checks(browser):
+    page = new_page(browser)
+    page.goto(URL)
+    page.click("#loadSamples")
+    before = stored(page)
+    page.evaluate("""() => {
+        window.originalSetItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(){ throw new Error('Storage unavailable'); };
+    }""")
+    page.locator('[data-k="name"]').first.fill("Unsaved film")
+    check("save failure: visible warning and existing save unchanged",
+          "Changes are not saved" in page.inner_text("#saveStatus") and stored(page) == before)
+    with page.expect_download() as dl:
+        page.click("#exportBtn")
+    exported = json.loads(Path(dl.value.path()).read_text(encoding="utf-8"))
+    check("save failure: export retains current work", exported["films"][0]["name"] == "Unsaved film")
+    page.evaluate("() => { Storage.prototype.setItem = window.originalSetItem; }")
+    page.locator('[data-k="name"]').first.fill("Saved film")
+    check("storage recovery: next edit saves and clears warning",
+          page.locator("#saveStatus").get_attribute("data-status") == "saved"
+          and stored(page)["films"][0]["name"] == "Saved film")
+
+    before = stored(page)
+    page.locator("[data-del]").first.click()
+    page.click("#undoBtn")
+    check("delete: undo restores and saves the whole library", stored(page) == before)
+    accept = [False]
+    page.on("dialog", lambda d: d.accept() if accept[0] else d.dismiss())
+    replacement = {"films": [{"name": "Imported film", "qty": 2}], "settings": {"paper": "a4"}}
+    upload(page, replacement)
+    check("import: cancel leaves saved library unchanged", stored(page) == before)
+    accept[0] = True
+    upload(page, replacement)
+    page.wait_for_function("document.querySelectorAll('.film').length === 1")
+    check("import: confirmation replaces films and settings",
+          stored(page)["films"][0]["name"] == "Imported film" and stored(page)["settings"]["paper"] == "a4")
+    page.click("#undoBtn")
+    check("import: undo restores previous films and settings", stored(page) == before)
+    page.click("#clearFilms")
+    page.click("#undoBtn")
+    check("clear: undo restores the library", stored(page) == before)
+    page.locator("[data-del]").first.click()
+    page.locator('[data-k="name"]').first.fill("Later edit")
+    check("undo: later edit dismisses stale recovery", page.locator("#undoRow").is_hidden())
+
+    page.evaluate("window.firstSheet = document.querySelector('.sheet')")
+    page.locator("#zoom").evaluate("el => { el.value='1'; el.dispatchEvent(new Event('input')); }")
+    check("zoom: existing sheet DOM is preserved", page.evaluate("window.firstSheet === document.querySelector('.sheet')"))
+    page.locator("#stripH").fill("0.2")
+    page.locator("#stripH").press("Tab")
+    height = page.locator("#stripH").input_value()
+    check("geometry: control, preview and save use the same minimum height",
+          height == "0.25" and stored(page)["settings"]["stripH"] == 0.25
+          and page.locator(".grid").first.evaluate("el => el.style.gridAutoRows") == "0.25in")
+    page.reload()
+    check("geometry: accepted height is stable after reload", page.locator("#stripH").input_value() == height)
+    page.locator("#stripH").fill("")
+    page.locator("#stripH").press("Tab")
+    check("geometry: blank draft restores last valid value", page.locator("#stripH").input_value() == height)
+    page.click("#clearFilms")
+    set_setting(page, "paper", "a4")
+    set_setting(page, "margin", 0.2)
+    check("empty library: wrap hint follows paper and margin",
+          "full width 7.87in" in page.inner_text("#wrapHint"))
+    page.context.close()
+
+    # A malformed save is recoverable and cannot be overwritten by ordinary edits.
+    page = new_page(browser)
+    page.goto(URL)
+    raw = json.dumps({"settings": {"paper": "a4"}})  # missing the required films list
+    page.evaluate("raw => localStorage.setItem('filmwrap.v1', raw)", raw)
+    page.reload()
+    check("saved shape: invalid library boots empty with recovery notice",
+          page.locator(".film").count() == 0 and page.locator("#savedRecovery").is_visible())
+    page.click("#addFilm")
+    check("saved shape: editing preserves unreadable original",
+          page.evaluate("localStorage.getItem('filmwrap.v1')") == raw)
+    with page.expect_download() as dl:
+        page.click("#downloadSaved")
+    check("saved shape: original data can be downloaded unchanged",
+          Path(dl.value.path()).read_text(encoding="utf-8") == raw)
+    page.on("dialog", lambda d: d.accept())
+    page.evaluate("""() => {
+        window.originalSetItem = Storage.prototype.setItem;
+        Storage.prototype.setItem = function(){ throw new Error('Storage unavailable'); };
+    }""")
+    page.click("#replaceSaved")
+    check("recovery: failed replacement preserves original and recovery controls",
+          page.evaluate("localStorage.getItem('filmwrap.v1')") == raw
+          and page.locator("#savedRecovery").is_visible())
+    page.evaluate("() => { Storage.prototype.setItem = window.originalSetItem; }")
+    page.click("#replaceSaved")
+    check("recovery: explicit replacement saves current library",
+          len(stored(page)["films"]) == 1 and page.locator("#savedRecovery").is_hidden())
+    page.context.close()
+
+    # A read failure must not become an automatic overwrite when writing still works.
+    page = new_page(browser)
+    page.goto(URL)
+    page.click("#loadSamples")
+    before = stored(page)
+    page.add_init_script("""
+        window.originalGetItem = Storage.prototype.getItem;
+        Storage.prototype.getItem = function(){ throw new Error('Storage unreadable'); };
+    """)
+    page.reload()
+    page.click("#addFilm")
+    original = page.evaluate("JSON.parse(window.originalGetItem.call(localStorage, 'filmwrap.v1'))")
+    check("storage read failure: original remains protected from edits",
+          original == before and page.locator("#savedRecovery").is_visible()
+          and page.locator("#downloadSaved").is_hidden())
+    page.context.close()
+
+    page = new_page(browser)
+    page.goto(URL)
+    page.evaluate("""() => localStorage.setItem('filmtube.v2', JSON.stringify({
+        films:[{name:'Legacy film',qty:2}],settings:{paper:'a4'}
+    }))""")
+    page.reload()
+    check("legacy: earlier library still loads", page.locator('[data-k="name"]').input_value() == "Legacy film")
+    page.locator('[data-k="name"]').fill("Migrated film")
+    check("legacy: next edit writes current key", stored(page)["films"][0]["name"] == "Migrated film")
+    page.context.close()
+
+def run_review_regressions(browser):
+    page = new_page(browser)
+    page.goto(URL)
+    page.click('#addFilm')
+    page.locator('[data-k="name"]').fill('Original')
+    other = page.context.new_page()
+    other.goto(URL)
+    page.locator('[data-k="name"]').fill('Latest saved name')
+    other.wait_for_function("document.querySelector('#saveStatus').textContent.includes('Save conflict')")
+    check('tabs: external save invalidates stale Saved status',
+          other.locator('#saveStatus').get_attribute('data-status') == 'error')
+    other.locator('[data-k="qty"]').fill('2')
+    check('tabs: stale edit preserves latest save and reports conflict',
+          stored(other)['films'][0]['name'] == 'Latest saved name'
+          and stored(other)['films'][0]['qty'] == 1
+          and 'Save conflict' in other.inner_text('#saveStatus'))
+    with other.expect_download() as dl:
+        other.click('#exportBtn')
+    exported = json.loads(Path(dl.value.path()).read_text(encoding='utf-8'))
+    check('tabs: stale tab can export its unsaved work',
+          exported['films'][0]['name'] == 'Original' and exported['films'][0]['qty'] == 2)
+    before = stored(other)
+    other.locator('[data-del]').click()
+    other.click('#undoBtn')
+    check('tabs: delete and undo cannot bypass conflict', stored(other) == before)
+    other.on('dialog', lambda d: d.accept())
+    upload(other, {'films': [{'name': 'Imported conflict', 'qty': 1}]})
+    other.wait_for_function("document.querySelector('[data-k=name]').value === 'Imported conflict'")
+    check('tabs: import cannot bypass conflict', stored(other) == before)
+    other.reload()
+    other.locator('[data-k="qty"]').fill('3')
+    check('tabs: reload adopts latest library and allows saving',
+          stored(other)['films'][0]['name'] == 'Latest saved name'
+          and stored(other)['films'][0]['qty'] == 3
+          and other.locator('#saveStatus').get_attribute('data-status') == 'saved')
+    page.context.close()
+
+    # Same-document mutations do not dispatch storage events: the save itself
+    # must detect changes, removals and clear(), even without event delivery.
+    for operation in ('update', 'remove', 'clear'):
+        page = new_page(browser)
+        page.goto(URL)
+        page.click('#addFilm')
+        page.evaluate("""operation => {
+            if(operation==='clear') localStorage.clear();
+            else if(operation==='remove') localStorage.removeItem('filmwrap.v1');
+            else {
+                const next=JSON.parse(localStorage.getItem('filmwrap.v1'));
+                next.films[0].name='External save';
+                localStorage.setItem('filmwrap.v1',JSON.stringify(next));
+            }
+        }""", operation)
+        before = page.evaluate("localStorage.getItem('filmwrap.v1')")
+        page.locator('[data-k="name"]').fill('Stale edit')
+        check(f'tabs: {operation} detected before write without storage event',
+              page.evaluate("localStorage.getItem('filmwrap.v1')") == before
+              and 'Save conflict' in page.inner_text('#saveStatus'))
+        page.context.close()
+
+    for raw, recovery in (('{corrupt', True),
+                          (json.dumps({'films': [{'name': 'Legacy', 'qty': 1}]}), False)):
+        page = new_page(browser)
+        page.goto(URL)
+        page.evaluate("raw=>localStorage.setItem('filmtube.v2',raw)", raw)
+        page.reload()
+        other = page.context.new_page()
+        other.goto(URL)
+        if recovery:
+            for tab in (page, other):
+                tab.click('#addFilm')
+                tab.on('dialog', lambda d: d.accept())
+            page.locator('[data-k="name"]').fill('Recovered first')
+            page.click('#replaceSaved')
+            before = stored(page)
+            other.click('#replaceSaved')
+            check('tabs: recovery replacement cannot overwrite a newer save',
+                  stored(other) == before and 'Save conflict' in other.inner_text('#saveStatus')
+                  and other.locator('#savedRecovery').is_visible())
+        else:
+            page.locator('[data-k="name"]').fill('Migrated first')
+            before = stored(page)
+            other.locator('[data-k="qty"]').fill('2')
+            check('tabs: legacy migration cannot overwrite a newer save',
+                  stored(other) == before and 'Save conflict' in other.inner_text('#saveStatus'))
+        check('tabs: original legacy data stays intact',
+              page.evaluate("localStorage.getItem('filmtube.v2')") == raw)
+        page.context.close()
+
+    page = new_page(browser)
+    page.goto(URL)
+    page.click('#addFilm')
+    page.locator('[data-k="name"]').fill('Exact fit')
+    set_setting(page, 'zoom', 1)
+    for columns, cuts in ((1, True), (2, True), (2, False)):
+        page.emulate_media(media='screen')
+        set_setting(page, 'fullWidth', columns == 1)
+        if columns == 2:
+            set_setting(page, 'stripLen', 4.25)
+        set_setting(page, 'showCut', cuts)
+        page.locator('[data-k="qty"]').fill(str(11 * columns))
+        for media in ('screen', 'print'):
+            page.emulate_media(media=media)
+            geometry = page.evaluate("""() => {
+                const sheet=document.querySelector('.sheet').getBoundingClientRect();
+                return [...document.querySelectorAll('.strip')].map(el=>{
+                    const r=el.getBoundingClientRect();
+                    return {left:r.left-sheet.left,right:r.right-sheet.right,
+                            top:r.top-sheet.top,bottom:r.bottom-sheet.bottom,
+                            width:r.width,height:r.height};
+                });
+            }""")
+            check(f'exact fit: {columns} columns cuts={cuts} {media} borders stay inside page',
+                  all(g['left'] >= -0.05 and g['right'] <= 0.05
+                      and g['top'] >= -0.05 and g['bottom'] <= 0.05 for g in geometry))
+            check(f'exact fit: {columns} columns cuts={cuts} {media} retains strip dimensions',
+                  all(abs(g['width'] - 816 / columns) < 0.05
+                      and abs(g['height'] - 96) < 0.05 for g in geometry))
+        pdf = pypdf.PdfReader(BytesIO(page.pdf(prefer_css_page_size=True, print_background=True)))
+        check(f'exact fit: {columns} columns cuts={cuts} PDF keeps every label on one page',
+              len(pdf.pages) == 1 and pdf.pages[0].extract_text().count('Exact fit') == 11 * columns)
+    page.context.close()
+
+def run_print_matrix(browser):
+    page = new_page(browser)
+    page.goto(URL)
+    page.on("dialog", lambda d: d.accept())
+    names = [f"Label{i:02}" for i in range(1, 24)]
+    library = {"films": [{"name": name, "qty": 1} for name in names], "settings": {
+        "paper": "a4", "margin": 0.25, "gap": 0.1, "fullWidth": False,
+        "stripLen": 3.5, "stripH": 1, "blankEvent": False, "blankDateShot": False,
+    }}
+    upload(page, library)
+    page.wait_for_function("document.querySelectorAll('.strip').length === 23")
+    page.emulate_media(media="print")
+    bounds = page.evaluate("""() => [...document.querySelectorAll('.sheet')].every(sheet => {
+        const page=sheet.getBoundingClientRect();
+        return [...sheet.querySelectorAll('.strip')].every(strip => {
+            const r=strip.getBoundingClientRect();
+            return r.left>=page.left && r.right<=page.right+1 && r.top>=page.top && r.bottom<=page.bottom+1
+                && Math.abs(r.width-3.5*96)<1 && Math.abs(r.height-96)<1;
+        });
+    })""")
+    check("A4 print: margin/gap multi-column strips keep dimensions within page", bounds)
+    pdf = pypdf.PdfReader(BytesIO(page.pdf(prefer_css_page_size=True, print_background=True)))
+    texts = [p.extract_text() for p in pdf.pages]
+    check("A4 print: exactly 2 pages with a partially filled final page", len(pdf.pages) == 2)
+    check("A4 print: every unique label appears on its expected page once",
+          len(texts) == 2 and all(texts[i // 20].count(name) == 1 for i, name in enumerate(names))
+          and all("".join(texts).count(name) == 1 for name in names))
+    check("A4 print: page dimensions match A4",
+          all(abs(float(p.mediabox.width)/72 - 210/25.4) < 0.02
+              and abs(float(p.mediabox.height)/72 - 297/25.4) < 0.02 for p in pdf.pages))
+    page.context.close()
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
-    ctx = browser.new_context()
-    page = ctx.new_page()
-
-    console_errors = []
-    page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
-    page.on("pageerror", lambda e: console_errors.append("pageerror: " + str(e)))
+    page = new_page(browser)
 
     page.goto(URL)
     page.wait_for_selector("#films", state="attached")
@@ -138,7 +443,7 @@ with sync_playwright() as p:
     check("full-width OFF: length field re-enabled", reenabled is True)
     check("full-width OFF: strip narrower than sheet", st2 / sw < 0.95, f"ratio={st2/sw:.3f}")
 
-    # 7c. Margin insets content within a FULL-PAGE sheet (so "Fit to page width" can't erase it)
+    # 7c. Margin insets content within a full-page sheet without changing its width.
     page.eval_on_selector('[data-set="fullWidth"]', "el => { el.checked=true; el.dispatchEvent(new Event('input',{bubbles:true})); }")
     page.eval_on_selector('[data-set="margin"]', "el => { el.value='0'; el.dispatchEvent(new Event('input',{bubbles:true})); }")
     page.wait_for_timeout(40)
@@ -147,7 +452,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(40)
     sheet_w_m15 = page.eval_on_selector(".sheet", "el => el.getBoundingClientRect().width")
     strip_w_m15 = page.eval_on_selector(".strip", "el => el.getBoundingClientRect().width")
-    check("margin: sheet stays full page width regardless of margin (fit-to-width safe)",
+    check("margin: sheet stays full page width regardless of margin",
           approx(sheet_w_m0, sheet_w_m15, 0.01), f"m0={sheet_w_m0:.1f} m15={sheet_w_m15:.1f}")
     check("margin 0.15: full-width strip insets to ~8.2/8.5 of the sheet",
           approx(strip_w_m15 / sheet_w_m15, 8.2 / 8.5, 0.02), f"ratio={strip_w_m15/sheet_w_m15:.3f}")
@@ -205,8 +510,7 @@ with sync_playwright() as p:
     check("persistence: samples survive reload", persisted == 4, f"cards={persisted}")
 
     # 13. Fresh context (new browser profile) starts empty -> proves no hardcoded preload
-    ctx2 = browser.new_context()
-    page2 = ctx2.new_page()
+    page2 = new_page(browser)
     page2.goto(URL)
     page2.wait_for_selector("#films", state="attached")
     fresh_cards = page2.eval_on_selector_all(".film", "e=>e.length")
@@ -224,9 +528,8 @@ with sync_playwright() as p:
                       "process": "C-41", "purchase": "2025-05-01", "expiry": "2028-04", "qty": 3,
                       "color": "#ff0000"}],
            "settings": {}}
-    tmp = os.path.join(tempfile.gettempdir(), "filmwrap_test_lib.json")
-    Path(tmp).write_text(json.dumps(lib), encoding="utf-8")
-    page2.set_input_files("#importFile", tmp)
+    page2.on("dialog", lambda d: d.accept())
+    upload(page2, lib)
     page2.wait_for_function("() => document.querySelectorAll('.film').length === 1")
     name_val = page2.eval_on_selector('.film input[data-k="name"]', "el => el.value")
     strip_cnt = page2.eval_on_selector_all(".strip", "els => els.length")
@@ -234,11 +537,7 @@ with sync_playwright() as p:
     check("import: qty 3 -> 3 strips", strip_cnt == 3, f"strips={strip_cnt}")
 
     # 15. Import hardening: malformed (films not an array) is rejected, no crash
-    page2.on("dialog", lambda d: d.accept())
-    bad = os.path.join(tempfile.gettempdir(), "filmwrap_bad.json")
-    Path(bad).write_text('{"films": {"not":"an array"}}', encoding="utf-8")
-    errs_before = len(console_errors)
-    page2.set_input_files("#importFile", bad)
+    upload(page2, {"films": {"not": "an array"}})
     page2.wait_for_timeout(120)
     still_one = page2.eval_on_selector_all(".film", "e=>e.length")
     check("import hardening: bad file rejected, state intact",
@@ -255,11 +554,8 @@ with sync_playwright() as p:
     check("export: JSON has films+settings", "films" in data and "settings" in data)
 
     # 17. Real print PDF at margin 0, on an isolated clean page:
-    #     exact Letter sizing, no blank pages. Directly answers "letter size isn't exact".
-    import pypdf
-    from io import BytesIO
-    ctx3 = browser.new_context()
-    page3 = ctx3.new_page()
+    #     exact Letter sizing and all expected sample labels.
+    page3 = new_page(browser)
     page3.goto(URL)
     page3.wait_for_selector("#films", state="attached")
     page3.click("#loadSamples")
@@ -271,11 +567,24 @@ with sync_playwright() as p:
     boxes = set((round(float(p.mediabox.width) / 72, 2), round(float(p.mediabox.height) / 72, 2))
                 for p in rdr.pages)
     check("print PDF: app margin is 0", app_margin == "0", f"margin={app_margin}")
-    check("print PDF: page count == on-screen sheets (no blank pages)",
-          pdf_pages == dom_sheets, f"dom_sheets={dom_sheets} pdf_pages={pdf_pages}")
+    check("print PDF: samples produce exactly 3 pages matching the preview",
+          pdf_pages == dom_sheets == 3, f"dom_sheets={dom_sheets} pdf_pages={pdf_pages}")
     check("print PDF: every page is exactly 8.5x11in (Letter)",
           boxes == {(8.5, 11.0)}, f"boxes={boxes}")
 
+    check("print PDF: every sample label appears once per roll, with no blank pages",
+          all(p.extract_text().strip() for p in rdr.pages)
+          and sum(p.extract_text().count("Kodak Portra 400") for p in rdr.pages) == 5
+          and sum(p.extract_text().count("Kodak Gold 200") for p in rdr.pages) == 8
+          and sum(p.extract_text().count("Ilford HP5 Plus") for p in rdr.pages) == 4
+          and sum(p.extract_text().count("Fujifilm Superia") for p in rdr.pages) == 6)
+
+    # Further regression scenarios below use their own clean browser profiles.
+    run_reliability_checks(browser)
+    run_print_matrix(browser)
+    run_review_regressions(browser)
+    check("all pages: no console/page errors", not console_errors, str(console_errors))
+    check("offline: no HTTP(S) requests attempted", not network_requests, str(network_requests))
     browser.close()
 
 print("\n" + "=" * 60)
